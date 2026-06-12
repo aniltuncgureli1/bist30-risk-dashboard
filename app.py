@@ -1,536 +1,271 @@
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
+import yfinance as yf
 import pandas as pd
 import numpy as np
-import yfinance as yf
-from sklearn.metrics import mean_squared_error
-from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
+from datetime import datetime, date
+import traceback
 
 # ==========================================
-# SAYFA YAPILANDIRMASI
+# SAYFA YAPILANDIRMASI VE CSS
 # ==========================================
-st.set_page_config(
-    page_title="BIST 30 Canlı Risk Portalı", 
-    layout="wide"
-)
+st.set_page_config(page_title="BIST 30 Risk Portalı", layout="wide")
 
-# ==========================================
-# CSS İLE GÖRSEL DÜZENLEMELER
-# ==========================================
 st.markdown("""
 <style>
-/* Font ve Genel Layout */
-html, body, p, li, span, .stMarkdown { 
-    font-size: 26px !important; 
-    line-height: 1.6 !important; 
-}
-
-/* Metrik Değerleri */
-div[data-testid="stMetricValue"] { 
-    font-size: 50px !important; 
-    font-weight: 900 !important; 
-    color: #00d4b2 !important; 
-    padding-bottom: 10px !important; 
-}
-
-/* Metrik Başlıkları */
-div[data-testid="stMetricLabel"] { 
-    font-size: 24px !important; 
-    font-weight: bold !important; 
-    color: #f0f2f6 !important; 
-}
-
-/* Ana ve Alt Başlıklar */
-h1 { 
-    font-size: 50px !important; 
-    color: #ff4b4b !important; 
-    margin-bottom: 10px !important; 
-}
-h2 { 
-    font-size: 40px !important; 
-    margin-top: 15px !important; 
-    margin-bottom: 10px !important; 
-}
-h3 { 
-    font-size: 32px !important; 
-    margin-top: 15px !important; 
-    margin-bottom: 10px !important; 
-}
-
-/* Sol Menü Ayarları */
-div[data-testid="stSidebar"] label { 
-    font-size: 22px !important; 
-    line-height: 1.5 !important; 
-}
-
-/* Grafik Kontrolleri ve Büyütme */
-.modebar-container { 
-    transform: scale(1.8) !important; 
-    transform-origin: top right !important; 
-}
-
-/* İstenmeyen Link (Anchor) İkonlarının Gizlenmesi */
-a.header-anchor { 
-    display: none !important; 
-}
-h1 a, h2 a, h3 a { 
-    display: none !important; 
-}
+div[data-testid="stMetricValue"] { font-size: 35px !important; font-weight: bold !important; color: #00d4b2 !important; }
+div[data-testid="stMetricLabel"] { font-size: 18px !important; font-weight: bold !important; color: #f0f2f6 !important; }
+h1, h2, h3 { color: #f0f2f6 !important; }
+.stTabs [data-baseweb="tab-list"] { gap: 20px; }
+.stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; font-size: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# ANA UYGULAMA BAŞLIĞI VE AÇIKLAMASI
-# ==========================================
-st.title("📊 BIST 30 Canlı Risk ve Volatilite Analiz Portalı", anchor=False)
-st.write(
-    "Bu portal, BIST 30 hisselerinin Yahoo Finance API üzerinden anlık olarak son 10 yıllık verilerini çeker, "
-    "risk skorları üretir, çeyreklik eşiklere göre sınıflandırır ve Ridge Regresyon modeliyle 2026 yıl sonu tahmini yapar."
-)
-
-# ==========================================
-# ŞİRKET İSİMLERİ SÖZLÜĞÜ
-# ==========================================
-sirket_isimleri = {
-    "AKBNK.IS": "Akbank", 
-    "ALARK.IS": "Alarko Holding", 
-    "ASELS.IS": "Aselsan",
-    "ASTOR.IS": "Astor Enerji", 
-    "BIMAS.IS": "BİM", 
-    "BRSAN.IS": "Borusan Boru",
-    "EKGYO.IS": "Emlak Konut", 
-    "ENKAI.IS": "Enka İnşaat", 
-    "EREGL.IS": "Erdemir",
-    "FROTO.IS": "Ford Otosan", 
-    "GARAN.IS": "Garanti BBVA", 
-    "GUBRF.IS": "Gübre Fabrikaları",
-    "HEKTS.IS": "Hektaş", 
-    "ISCTR.IS": "İş Bankası", 
-    "KCHOL.IS": "Koç Holding",
-    "KONTR.IS": "Kontrolmatik", 
-    "KRDMD.IS": "Kardemir", 
-    "OYAKC.IS": "Oyak Çimento",
-    "PETKM.IS": "Petkim", 
-    "PGSUS.IS": "Pegasus", 
-    "SAHOL.IS": "Sabancı Holding",
-    "SASA.IS": "Sasa Polyester", 
-    "SISE.IS": "Şişecam", 
-    "TCELL.IS": "Turkcell",
-    "THYAO.IS": "Türk Hava Yolları", 
-    "TOASO.IS": "Tofaş", 
-    "TUPRS.IS": "Tüpraş",
-    "YKBNK.IS": "Yapı Kredi"
-}
-
-# ==========================================
-# CANLI VERİ ÇEKME VE RİSK HESAPLAMA MOTORU
-# ==========================================
-@st.cache_data(ttl=3600)  # Verileri 1 saat boyunca önbellekte tutar
-def canli_verileri_hazirla():
-    tickers = list(sirket_isimleri.keys())
-    
-    # Tüm BIST30 hisselerinin son 10 yıllık kapanış fiyatlarını canlı olarak çekiyoruz
-    veri = yf.download(tickers, period="10y")['Close']
-    
-    sonuclar_listesi = []
-    
-    for ticker in tickers:
-        if ticker in veri.columns:
-            fiyatlar = veri[ticker].dropna()
-            
-            if len(fiyatlar) < 50: 
-                continue
-            
-            # Güncel Canlı Fiyat
-            son_fiyat = fiyatlar.iloc[-1]
-            
-            # Volatilite Hesaplaması (Yıllıklandırılmış Standart Sapma)
-            gunluk_getiri = fiyatlar.pct_change().dropna()
-            volatilite = gunluk_getiri.std() * np.sqrt(252)
-            
-            # Maksimum Düşüş (Max Drawdown) Hesaplaması
-            kumulatif_zirve = fiyatlar.cummax()
-            dususler = (fiyatlar - kumulatif_zirve) / kumulatif_zirve
-            max_drawdown = dususler.min()
-            
-            sonuclar_listesi.append({
-                "Hisse": ticker,
-                "Son_Fiyat": son_fiyat,
-                "Volatilite": volatilite,
-                "Max_Drawdown": max_drawdown
-            })
-            
-    metrics_df = pd.DataFrame(sonuclar_listesi)
-    
-    # Kompozit Risk Skoru Üretimi (Volatilite %60, Drawdown %40)
-    metrics_df['Vol_Rank'] = metrics_df['Volatilite'].rank(pct=True)
-    metrics_df['DD_Rank'] = metrics_df['Max_Drawdown'].rank(ascending=False, pct=True)
-    metrics_df['Risk_Skoru'] = (metrics_df['Vol_Rank'] * 0.6) + (metrics_df['DD_Rank'] * 0.4)
-    
-    # Dinamik Çeyreklik Eşiklere Göre Sınıflandırma
-    q1 = metrics_df['Risk_Skoru'].quantile(0.25)
-    q2 = metrics_df['Risk_Skoru'].quantile(0.50)
-    q3 = metrics_df['Risk_Skoru'].quantile(0.75)
-    
-    def siniflandir(score):
-        if score <= q1: 
-            return "Çok Güvenilir (Defansif)"
-        elif score <= q2: 
-            return "Güvenilir (Dengeli)"
-        elif score <= q3: 
-            return "Az Güvenilir (Dinamik)"
-        else: 
-            return "Güvenilmez (Agresif)"
-            
-    metrics_df['Risk_Sinifi'] = metrics_df['Risk_Skoru'].apply(siniflandir)
-    
-    return metrics_df, veri
-
-# Verileri Çağırma İşlemi
-metrics_df, ham_fiyatlar = canli_verileri_hazirla()
-
-# ==========================================
-# ML TAHMİN MOTORU (RIDGE REGRESYONU)
-# ==========================================
-@st.cache_data
-def ml_ile_tahmin_ve_test(fiyat_serisi, hedef_tarih="2026-12-31"):
-    df_temiz = fiyat_serisi.dropna().to_frame(name="Fiyat")
-    
-    # 1. ÖZELLİK MÜHENDİSLİĞİ (Gecikmeler ve Ortalamalar)
-    df_temiz['Lag_1'] = df_temiz['Fiyat'].shift(1)
-    df_temiz['Lag_3'] = df_temiz['Fiyat'].shift(3)
-    df_temiz['Lag_5'] = df_temiz['Fiyat'].shift(5)
-    df_temiz['MA_5'] = df_temiz['Fiyat'].rolling(window=5).mean()
-    df_temiz['MA_20'] = df_temiz['Fiyat'].rolling(window=20).mean()
-    
-    df_ml = df_temiz.dropna()
-    ozellikler = ['Lag_1', 'Lag_3', 'Lag_5', 'MA_5', 'MA_20']
-    
-    X = df_ml[ozellikler]
-    y = df_ml['Fiyat']
-    
-    # Verilerin Ölçeklendirilmesi (Standardization)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    # 2. BACKTESTING (Test Seti: Son 6 Ay / Yaklaşık 130 İşlem Günü)
-    test_gun_sayisi = 130
-    split_index = len(df_ml) - test_gun_sayisi
-    
-    X_train = X_scaled[:split_index]
-    X_test = X_scaled[split_index:]
-    y_train = y.iloc[:split_index]
-    y_test = y.iloc[split_index:]
-    
-    # Model Eğitimi
-    model_test = RidgeCV(alphas=[0.1, 1.0, 10.0, 100.0])
-    model_test.fit(X_train, y_train)
-    test_tahminleri = model_test.predict(X_test)
-    
-    # Hata Metriklerinin Hesaplanması (Sadece Yüzdesel Başarı)
-    mape = np.mean(np.abs((y_test.values - test_tahminleri) / y_test.values)) * 100
-    basari_orani = max(0, 100 - mape)
-    
-    # 3. GELECEK PROJEKSİYONU (Özyinelemeli Tahmin)
-    model_final = RidgeCV(alphas=[0.1, 1.0, 10.0, 100.0])
-    model_final.fit(X_scaled, y)
-    
-    son_tarih = df_ml.index[-1]
-    hedef = pd.to_datetime(hedef_tarih)
-    gelecek_tarihler = pd.bdate_range(start=son_tarih + pd.Timedelta(days=1), end=hedef)
-    
-    tahmin_listesi = []
-    aktif_seri = df_ml['Fiyat'].copy()
-    
-    # Gün gün geleceği tahmin etme döngüsü
-    for tar in gelecek_tarihler:
-        lag_1 = aktif_seri.iloc[-1]
-        lag_3 = aktif_seri.iloc[-3]
-        lag_5 = aktif_seri.iloc[-5]
-        ma_5 = aktif_seri.iloc[-5:].mean()
-        ma_20 = aktif_seri.iloc[-20:].mean()
-        
-        X_anlik = pd.DataFrame([[lag_1, lag_3, lag_5, ma_5, ma_20]], columns=ozellikler)
-        X_anlik_scaled = scaler.transform(X_anlik)
-        
-        anlik_pred = model_final.predict(X_anlik_scaled)[0]
-        tahmin_listesi.append(anlik_pred)
-        aktif_seri[tar] = anlik_pred
-        
-    tahmin_serisi = pd.Series(tahmin_listesi, index=gelecek_tarihler)
-    yil_sonu_fiyat = tahmin_serisi.iloc[-1]
-    
-    return df_ml['Fiyat'], tahmin_serisi, yil_sonu_fiyat, basari_orani
-
-# ==========================================
-# SOL MENÜ (SIDEBAR) VE HİSSE SEÇİMİ
-# ==========================================
-# Verinin alfabetik sıralanması ve liste oluşturulması
-metrics_df = metrics_df.sort_values(by="Hisse").reset_index(drop=True)
-hisse_listesi = metrics_df["Hisse"].tolist()
-
-st.sidebar.title("Hisse Listesi (A-Z)")
-selected_ticker = st.sidebar.radio(
-    "Analiz etmek istediğiniz hisseyi seçin:", 
-    hisse_listesi,
-    format_func=lambda x: f"{x} - {sirket_isimleri.get(x, 'Bilinmiyor')}"
-)
-
-# Seçilen hissenin ilgili verilerini çekme
-hisse_verisi = metrics_df[metrics_df["Hisse"] == selected_ticker].iloc[0]
-
-# ==========================================
-# 1. BÖLÜM: FİNANSAL ÖZET (CANLI VERİ)
-# ==========================================
-st.markdown("<hr style='border: 1px solid #444; margin: 15px 0;'>", unsafe_allow_html=True) 
-st.subheader(f"🔍 {selected_ticker} ({sirket_isimleri.get(selected_ticker, '')}) Finansal Özet", anchor=False)
-
-col1, col2, col3 = st.columns(3)
-
-# 10 Yıllık Fiyat Verilerinin Hesaplanması
-hisse_tum_fiyatlar = ham_fiyatlar[selected_ticker].dropna()
-min_fiyat = hisse_tum_fiyatlar.min()
-max_fiyat = hisse_tum_fiyatlar.max()
-
-fiyat_aciklamasi = f"Son 10 Yılda Görülen:\n\n⬇️ En Düşük Fiyat: {min_fiyat:.2f} TL\n\n⬆️ En Yüksek Fiyat: {max_fiyat:.2f} TL"
-volatilite_aciklamasi = "Volatilite (Oynaklık), hisse fiyatının belirli bir zaman diliminde ortalamadan ne kadar saptığını gösterir."
-
-col1.metric(label="Güncel Fiyat (Canlı)", value=f"{hisse_verisi['Son_Fiyat']:.2f} TL", help=fiyat_aciklamasi)
-col2.metric(label="Yıllık Volatilite", value=f"%{hisse_verisi['Volatilite']*100:.2f}", help=volatilite_aciklamasi)
-col3.metric(label="Maksimum Düşüş", value=f"%{hisse_verisi['Max_Drawdown']*100:.2f}")
-
-# ==========================================
-# 2. BÖLÜM: GÖRSEL RİSK KADRANI VE KISA ÖZET
-# ==========================================
-st.markdown("<hr style='border: 1px solid #444; margin: 15px 0;'>", unsafe_allow_html=True) 
-st.subheader("🤖 Algoritma Geri Bildirimi ve Risk Skalası", anchor=False)
-
-status_class = hisse_verisi["Risk_Sinifi"]
-risk_skoru_yuzde = int(hisse_verisi["Risk_Skoru"] * 100)
-
-# Risk Sınıfına Göre Renk ve İkon Belirleme
-if risk_skoru_yuzde <= 25:
-    bar_color = "#00d4b2" 
-    ikon = "🛡️"
-elif risk_skoru_yuzde <= 50:
-    bar_color = "#29b5e8" 
-    ikon = "⚖️"
-elif risk_skoru_yuzde <= 75:
-    bar_color = "#ffa421" 
-    ikon = "⚡"
-else:
-    bar_color = "#ff4b4b" 
-    ikon = "⚠️"
-
-g_col1, g_col2 = st.columns([1, 1])
-
-# Kadran Çizimi
-with g_col1:
-    fig_gauge = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = risk_skoru_yuzde,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        number = {'suffix': "/100", 'font': {'size': 40, 'color': bar_color}},
-        gauge = {
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "white"},
-            'bar': {'color': "rgba(0,0,0,0)"},
-            'bgcolor': "#333",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-            'steps': [
-                {'range': [0, 25], 'color': '#00d4b2'}, 
-                {'range': [25, 50], 'color': '#29b5e8'}, 
-                {'range': [50, 75], 'color': '#ffa421'}, 
-                {'range': [75, 100], 'color': '#ff4b4b'} 
-            ],
-            'threshold': {
-                'line': {'color': "white", 'width': 6}, 
-                'thickness': 0.8, 
-                'value': risk_skoru_yuzde 
-            }
-        }
-    ))
-    fig_gauge.update_layout(height=260, margin=dict(l=30, r=30, t=50, b=10))
-    st.plotly_chart(fig_gauge, use_container_width=True)
-
-# Dinamik Yatırım Profili Geri Bildirimleri
-with g_col2:
-    st.markdown(f"<h3 style='color:{bar_color};'>{ikon} Sınıf: {status_class}</h3>", unsafe_allow_html=True)
-    
-    if "Çok Güvenilir" in status_class:
-        st.markdown(
-            "<ul>"
-            "<li><b>İstikrar:</b> Endeks içi en yüksek stabilite (Q1).</li>"
-            "<li><b>Kriz Direnci:</b> Sert piyasa düşüşlerinde korumacı davranır.</li>"
-            "<li><b>Yatırım Profili:</b> Defansif (Düşük Risk) portföyler için idealdir.</li>"
-            "</ul>", 
-            unsafe_allow_html=True
-        )
-    elif "Güvenilir" in status_class:
-        st.markdown(
-            "<ul>"
-            "<li><b>İstikrar:</b> Piyasa ile uyumlu, dengeli hareket (Q2).</li>"
-            "<li><b>Kriz Direnci:</b> Ortalama düzeyde tepki verir.</li>"
-            "<li><b>Yatırım Profili:</b> Uzun vadeli ana yatırımlar için makuldür.</li>"
-            "</ul>", 
-            unsafe_allow_html=True
-        )
-    elif "Az Güvenilir" in status_class:
-        st.markdown(
-            "<ul>"
-            "<li><b>İstikrar:</b> Ortalamanın üzerinde oynaklık (Q3).</li>"
-            "<li><b>Kriz Direnci:</b> Ani ve sert fiyat düzeltmelerine açıktır.</li>"
-            "<li><b>Yatırım Profili:</b> Getiri potansiyeli yüksek, stres toleransı gerektirir.</li>"
-            "</ul>", 
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            "<ul>"
-            "<li><b>İstikrar:</b> Günlük dalgalanmaları çok yüksektir (Q4).</li>"
-            "<li><b>Kriz Direnci:</b> Tarihsel olarak çok derin değer kayıpları yaşanmıştır.</li>"
-            "<li><b>Yatırım Profili:</b> Sadece agresif ve yüksek risk seven profiller içindir.</li>"
-            "</ul>", 
-            unsafe_allow_html=True
-        )
-
-# ==========================================
-# 3. BÖLÜM: DİNAMİK BİLGİ KARTLARI (FLEXBOX İLE KUSURSUZ ORTALAMA)
-# ==========================================
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("📊 Güncel Volatilite Sınırları", anchor=False)
-
-summary_df = metrics_df.groupby("Risk_Sinifi").agg(
-    Min_Volatilite=('Volatilite', lambda x: f"%{x.min()*100:.1f}"),
-    Max_Volatilite=('Volatilite', lambda x: f"%{x.max()*100:.1f}")
-).reset_index()
-
-c1, c2, c3, c4 = st.columns(4)
-sutunlar = [c1, c2, c3, c4]
-
-sinif_ayarlari = {
-    "Çok Güvenilir (Defansif)": {"renk": "#00d4b2", "ikon": "🛡️", "isim": "Çok Güvenilir"},
-    "Güvenilir (Dengeli)": {"renk": "#29b5e8", "ikon": "⚖️", "isim": "Güvenilir"},
-    "Az Güvenilir (Dinamik)": {"renk": "#ffa421", "ikon": "⚡", "isim": "Az Güvenilir"},
-    "Güvenilmez (Agresif)": {"renk": "#ff4b4b", "ikon": "⚠️", "isim": "Güvenilmez"}
-}
-
-sira = [
-    "Çok Güvenilir (Defansif)", 
-    "Güvenilir (Dengeli)", 
-    "Az Güvenilir (Dinamik)", 
-    "Güvenilmez (Agresif)"
+TICKERS = [
+    "AKBNK.IS", "ARCLK.IS", "ASELS.IS", "BIMAS.IS",
+    "DOHOL.IS", "EKGYO.IS", "ENKAI.IS", "EREGL.IS",
+    "FROTO.IS", "GARAN.IS", "GUBRF.IS", "HALKB.IS",
+    "ISCTR.IS", "KCHOL.IS", "KRDMD.IS", "MGROS.IS",
+    "PETKM.IS", "PGSUS.IS", "SAHOL.IS", "SASA.IS",
+    "SISE.IS", "TAVHL.IS", "TCELL.IS", "THYAO.IS",
+    "TKFEN.IS", "TOASO.IS", "TUPRS.IS", "YKBNK.IS",
 ]
 
-for i, sinif in enumerate(sira):
-    if sinif in summary_df['Risk_Sinifi'].values:
-        row = summary_df[summary_df['Risk_Sinifi'] == sinif].iloc[0]
-        alt_sinir = row['Min_Volatilite']
-        ust_sinir = row['Max_Volatilite']
-    else:
-        alt_sinir = "-"
-        ust_sinir = "-"
+# ==========================================
+# VERİ ÇEKME VE RİSK HESAPLAMA MOTORU
+# ==========================================
+@st.cache_data(ttl=3600, show_spinner="Yahoo Finance verileri çekiliyor ve metrikler hesaplanıyor...")
+def verileri_hazirla():
+    try:
+        raw = yf.download(TICKERS, period="10y", auto_adjust=True, progress=False)
+        df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+
+        results = []
+        for ticker in TICKERS:
+            col = ticker if ticker in df.columns else ticker.replace(".IS", "")
+            if col not in df.columns:
+                continue
+            prices = df[col].dropna()
+            if len(prices) < 252:
+                continue
+
+            log_ret = np.log(prices / prices.shift(1)).dropna()
+            volatility = float(log_ret.std() * np.sqrt(252))
+
+            cum = (1 + log_ret).cumprod()
+            drawdown = (cum - cum.cummax()) / cum.cummax()
+            max_dd = float(abs(drawdown.min()))
+
+            last_252 = prices.iloc[-252:]
+            
+            results.append({
+                "ticker": ticker.replace(".IS", ""),
+                "full_ticker": ticker,
+                "volatility": volatility,
+                "max_drawdown": max_dd,
+                "current_price": float(prices.iloc[-1]),
+                "high_52w": float(last_252.max()),
+                "low_52w": float(last_252.min()),
+            })
+
+        if not results:
+            return None, None
+
+        vol = np.array([r["volatility"] for r in results])
+        dd = np.array([r["max_drawdown"] for r in results])
+        vol_n = (vol - vol.min()) / (vol.max() - vol.min() + 1e-10)
+        dd_n = (dd - dd.min()) / (dd.max() - dd.min() + 1e-10)
+        scores = 0.6 * vol_n + 0.4 * dd_n
+
+        q25, q50, q75 = np.percentile(scores, [25, 50, 75])
+
+        for i, r in enumerate(results):
+            s = float(scores[i])
+            r["risk_score"] = s
+            if s <= q25:
+                r["category"], r["category_sub"], r["category_level"], r["color"] = "Çok Güvenilir", "Defansif", 1, "#00d4b2"
+            elif s <= q50:
+                r["category"], r["category_sub"], r["category_level"], r["color"] = "Güvenilir", "Dengeli", 2, "#29b5e8"
+            elif s <= q75:
+                r["category"], r["category_sub"], r["category_level"], r["color"] = "Az Güvenilir", "Dinamik", 3, "#ffa421"
+            else:
+                r["category"], r["category_sub"], r["category_level"], r["color"] = "Güvenilmez", "Agresif", 4, "#ff4b4b"
+
+        results_df = pd.DataFrame(results).sort_values(by="risk_score")
+        clean_df = df.rename(columns=lambda c: c.replace(".IS", "") if ".IS" in str(c) else c)
+        
+        return results_df, clean_df
     
-    renk = sinif_ayarlari[sinif]["renk"]
-    ikon = sinif_ayarlari[sinif]["ikon"]
-    isim = sinif_ayarlari[sinif]["isim"]
+    except Exception as e:
+        st.error(f"Veri çekme hatası: {e}")
+        return None, None
+
+risk_df, price_df = verileri_hazirla()
+
+# ==========================================
+# MAKİNE ÖĞRENMESİ (RIDGE) TAHMİN MOTORU
+# ==========================================
+@st.cache_data(show_spinner=False)
+def hisse_tahmini_yap(ticker):
+    prices = price_df[ticker].dropna()
+    df_f = pd.DataFrame({"price": prices})
     
-    # Hata Çözümü: h4 ve h5 etiketleri yerine div kullanılarak 
-    # Streamlit'in otomatik eklediği görünmez linklerin eksen kaydırması engellendi.
+    for lag in [1, 2, 3, 5, 10, 20]:
+        df_f[f"lag_{lag}"] = df_f["price"].shift(lag)
+    df_f["ma_20"] = df_f["price"].rolling(20).mean()
+    df_f["ma_50"] = df_f["price"].rolling(50).mean()
+    df_f["ma_200"] = df_f["price"].rolling(200).mean()
+    df_f = df_f.dropna()
+    
+    X = df_f.drop("price", axis=1).values
+    y = df_f["price"].values
+    split = max(len(X) - 126, int(len(X) * 0.8))
+
+    scaler = StandardScaler()
+    X_tr = scaler.fit_transform(X[:split])
+    X_te = scaler.transform(X[split:])
+    
+    model = Ridge(alpha=1.0)
+    model.fit(X_tr, y[:split])
+    backtest = model.predict(X_te)
+    
+    # Hata Metrikleri
+    mape = np.mean(np.abs((y[split:] - backtest) / y[split:])) * 100
+    basari_orani = max(0, 100 - mape)
+
+    today = date.today()
+    year_end = date(2026, 12, 31)
+    trading_days = max(1, int((year_end - today).days * 252 / 365))
+
+    price_buf = list(df_f["price"].iloc[-200:].values)
+    forecast_prices = []
+    
+    for _ in range(trading_days):
+        lags = [price_buf[-i] for i in [1, 2, 3, 5, 10, 20]]
+        ma20 = float(np.mean(price_buf[-20:]))
+        ma50 = float(np.mean(price_buf[-50:])) if len(price_buf) >= 50 else float(np.mean(price_buf))
+        ma200 = float(np.mean(price_buf[-200:])) if len(price_buf) >= 200 else float(np.mean(price_buf))
+        
+        feat = np.array(lags + [ma20, ma50, ma200]).reshape(1, -1)
+        pred = float(model.predict(scaler.transform(feat))[0])
+        forecast_prices.append(pred)
+        price_buf.append(pred)
+
+    hist_dates = df_f.index
+    backtest_dates = df_f.index[split:]
+    forecast_dates = pd.bdate_range(pd.Timestamp.today(), periods=trading_days)
+    
+    return hist_dates, df_f["price"].values, backtest_dates, backtest, forecast_dates, forecast_prices, basari_orani
+
+# ==========================================
+# KULLANICI ARAYÜZÜ (UI) BAŞLANGICI
+# ==========================================
+if risk_df is None or price_df is None:
+    st.stop()
+
+st.title("📊 Bitirme Projesi: BIST 30 Risk ve Volatilite Ağı")
+
+tab1, tab2 = st.tabs(["🔍 Bireysel Hisse Analizi & Tahmin", "💼 Portföy Risk Optimizasyonu"])
+
+# --- TAB 1: BİREYSEL HİSSE ---
+with tab1:
+    hisse_listesi = risk_df["ticker"].tolist()
+    
+    col_sel, _ = st.columns([1, 3])
+    selected_ticker = col_sel.selectbox("İncelenecek Hisse:", hisse_listesi)
+    
+    hisse_verisi = risk_df[risk_df["ticker"] == selected_ticker].iloc[0]
+    
+    st.markdown("<hr style='border: 1px solid #444; margin: 15px 0;'>", unsafe_allow_html=True)
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Güncel Fiyat", f"{hisse_verisi['current_price']:.2f} TL")
+    c2.metric("Yıllık Volatilite", f"%{hisse_verisi['volatility']*100:.2f}")
+    c3.metric("Maksimum Düşüş", f"%{hisse_verisi['max_drawdown']*100:.2f}")
+    
     html_card = f"""
-    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
-        <div style="color: {renk}; margin-bottom: 10px; font-size: 32px;">{ikon}</div>
-        <div style="color: white; margin-bottom: 15px; font-size: 24px; font-weight: bold;">{isim}</div>
-        <div style="color: #ccc; font-size: 24px; font-weight: bold;">{alt_sinir} - {ust_sinir}</div>
+    <div style="background-color: #2b2b2b; padding: 15px; border-radius: 12px; border-left: 6px solid {hisse_verisi['color']}; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
+        <h5 style="color: white; margin: 0; font-size: 20px;">Risk Sınıfı: <span style="color: {hisse_verisi['color']}">{hisse_verisi['category']} ({hisse_verisi['category_sub']})</span></h5>
     </div>
     """
-    with sutunlar[i]:
-        st.markdown(html_card, unsafe_allow_html=True)
-
-# ==========================================
-# 4. BÖLÜM: ML TAHMİN PROJEKSİYONU
-# ==========================================
-st.markdown("<hr style='border: 1px solid #444; margin: 15px 0;'>", unsafe_allow_html=True) 
-st.subheader(f"🔮 {selected_ticker} Gelişmiş Ridge Regresyon Projeksiyonu", anchor=False)
-
-gecmis_veri, gelecek_tahmin, yil_sonu_hedef, basari_orani = ml_ile_tahmin_ve_test(ham_fiyatlar[selected_ticker])
-
-if yil_sonu_hedef is not None:
-    guncel_fiyat = hisse_verisi['Son_Fiyat']
-    beklenen_getiri_orani = ((yil_sonu_hedef - guncel_fiyat) / guncel_fiyat) * 100
+    c4.markdown(html_card, unsafe_allow_html=True)
     
-    t_col1, t_col2, t_col3 = st.columns(3)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader(f"🔮 2026 Yıl Sonu Tahmini (Ridge Regresyon)", anchor=False)
     
-    t_col1.metric(
-        label="Mevcut Fiyat (Canlı)", 
-        value=f"{guncel_fiyat:.2f} TL"
-    )
+    h_dates, h_prices, b_dates, b_prices, f_dates, f_prices, basari = hisse_tahmini_yap(selected_ticker)
     
-    t_col2.metric(
-        label="Modelin 2026 Yıl Sonu Öngörüsü", 
-        value=f"{yil_sonu_hedef:.2f} TL", 
-        delta=f"%{beklenen_getiri_orani:.2f} Trend Değişimi"
-    )
+    beklenen_getiri = ((f_prices[-1] - hisse_verisi['current_price']) / hisse_verisi['current_price']) * 100
     
-    basari_aciklamasi = "Bu makine öğrenmesi algoritması, 2026 yıl sonu hedefini hesaplamadan önce canlı veriler üzerinde son 6 ayda geriye dönük doğrulama testi (backtesting) gerçekleştirerek bu başarı oranını yakalamıştır."
+    tc1, tc2 = st.columns(2)
+    tc1.metric("Modelin Yıl Sonu Hedefi", f"{f_prices[-1]:.2f} TL", delta=f"%{beklenen_getiri:.2f} Beklenen Getiri")
+    tc2.metric("🎯 Model Doğruluk Oranı", f"%{basari:.1f}", help="Son 6 aylık veriler üzerinde yapılan geriye dönük doğrulama (backtesting) başarısı.")
     
-    t_col3.metric(
-        label="🎯 Model Doğruluk Oranı", 
-        value=f"%{basari_orani:.1f}", 
-        help=basari_aciklamasi
-    )
-    
-    # Grafik Çizimi
+    # Grafik
     fig = go.Figure()
+    fig.add_trace(go.Scatter(x=h_dates, y=h_prices, mode='lines', name='Gerçekleşen Fiyat', line=dict(color='#00d4b2', width=2)))
+    fig.add_trace(go.Scatter(x=b_dates, y=b_prices, mode='lines', name='Backtest (Test Seti)', line=dict(color='#ffa421', width=2, dash='dot')))
+    fig.add_trace(go.Scatter(x=f_dates, y=f_prices, mode='lines', name='2026 Projeksiyonu', line=dict(color='#ff4b4b', width=4)))
     
-    fig.add_trace(go.Scatter(
-        x=gecmis_veri.index, 
-        y=gecmis_veri.values, 
-        mode='lines', 
-        name='Canlı Tarihsel Fiyat', 
-        line=dict(color=bar_color, width=3)
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=gelecek_tahmin.index, 
-        y=gelecek_tahmin.values, 
-        mode='lines', 
-        name='Ridge Yıl Sonu Trendi', 
-        line=dict(color='#9b59b6', width=5, dash='dash')
-    ))
-    
-    fig.update_layout(
-        font=dict(size=28), 
-        xaxis_title="<b>Tarih</b>", 
-        yaxis_title="<b>Fiyat (TL)</b>",
-        margin=dict(l=50, r=50, t=100, b=50), 
-        height=800,
-        legend=dict(
-            orientation="h", 
-            yanchor="bottom", 
-            y=1.02, 
-            xanchor="left", 
-            x=0, 
-            font=dict(size=32)
-        )
-    )
-    
+    fig.update_layout(height=600, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.05))
     st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("Yetersiz zaman serisi verisi nedeniyle tahmin modeli oluşturulamadı.")
 
-# ==========================================
-# 5. BÖLÜM: YASAL UYARI VE BİLGİLENDİRME
-# ==========================================
-st.sidebar.markdown("<hr style='border: 1px solid #444; margin: 20px 0;'>", unsafe_allow_html=True)
-st.sidebar.warning(
-    "⚠️ **Sorumluluk Reddi Beyanı:**\n\n"
-    "Bu portalda sunulan analizler, risk skorları ve makine öğrenmesi tahmin modelleri "
-    "tamamen canlı verilere dayalı **akademik** amaçlı çıktılardır. "
-    "Yatırımcılara tarafsız istatistiksel bilgi sağlamak amacıyla geliştirilmiş olup, "
-    "kesinlikle **Yatırım Tavsiyesi Değildir (YTD)**. "
-    "Karar mekanizması tamamen kullanıcının hür iradesine ait olup, sistem hiçbir manipülatif yönlendirme içermez."
-)
+# --- TAB 2: PORTFÖY HESAPLAYICI ---
+with tab2:
+    st.subheader("Portföy Kompozisyonu", anchor=False)
+    st.write("FastAPI tabanındaki algoritmanın dinamik portföy ağırlıklandırma test alanı.")
+    
+    p_col1, p_col2 = st.columns([2, 1])
+    
+    with p_col1:
+        secilen_portfoy = st.multiselect("Portföye Hisse Ekle (En az 2):", hisse_listesi, default=["AKBNK", "THYAO"])
+        
+        if len(secilen_portfoy) >= 2:
+            agirliklar = []
+            cols = st.columns(len(secilen_portfoy))
+            for idx, hisse in enumerate(secilen_portfoy):
+                w = cols[idx].number_input(f"{hisse} Ağırlığı", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+                agirliklar.append(w)
+                
+            w_array = np.array(agirliklar)
+            w_array = w_array / w_array.sum()
+            
+            # Matris Hesaplamaları
+            prices = price_df[secilen_portfoy].ffill().dropna(how="all")
+            returns = prices.pct_change().dropna()
+            
+            cov = returns.cov() * 252
+            cov_vals = np.nan_to_num(cov.values, nan=0.0)
+            port_var = float(w_array @ cov_vals @ w_array)
+            port_vol = float(np.sqrt(max(port_var, 0)))
+            
+            port_ret = (returns * w_array).sum(axis=1)
+            cum = (1 + port_ret).cumprod()
+            dd = (cum - cum.cummax()) / cum.cummax()
+            max_dd = float(abs(dd.min()))
+            
+            w_score = 0.0
+            for i, ticker in enumerate(secilen_portfoy):
+                stock_data = risk_df[risk_df["ticker"] == ticker].iloc[0]
+                w_score += float(w_array[i]) * stock_data["risk_score"]
+                
+            if w_score <= 0.25: p_cat, p_color = "Çok Güvenilir (Defansif)", "#00d4b2"
+            elif w_score <= 0.50: p_cat, p_color = "Güvenilir (Dengeli)", "#29b5e8"
+            elif w_score <= 0.75: p_cat, p_color = "Az Güvenilir (Dinamik)", "#ffa421"
+            else: p_cat, p_color = "Güvenilmez (Agresif)", "#ff4b4b"
+            
+            st.markdown("<hr>", unsafe_allow_html=True)
+            pc1, pc2, pc3 = st.columns(3)
+            pc1.metric("Kümülatif Portföy Volatilitesi", f"%{port_vol*100:.2f}")
+            pc2.metric("Portföy Maksimum Düşüşü", f"%{max_dd*100:.2f}")
+            pc3.markdown(f"**Ağırlıklı Risk Skalası:**<br><span style='color:{p_color}; font-size:24px; font-weight:bold;'>{p_cat}</span>", unsafe_allow_html=True)
+            
+            # Portföy Dağılımı Grafiği
+            fig_pie = px.pie(values=w_array*100, names=secilen_portfoy, title="Ağırlık Dağılımı", hole=0.4)
+            fig_pie.update_layout(height=400, margin=dict(t=40, b=0, l=0, r=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        else:
+            st.warning("Hesaplama yapabilmek için en az 2 hisse seçmelisiniz.")
