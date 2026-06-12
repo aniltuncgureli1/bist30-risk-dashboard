@@ -399,6 +399,7 @@ with g_col2:
 # ==========================================
 # 3. BÖLÜM: DİNAMİK BİLGİ KARTLARI (FLEXBOX İLE KUSURSUZ ORTALAMA)
 # ==========================================
+
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("📊 Güncel Volatilite Sınırları", anchor=False)
 
@@ -437,12 +438,13 @@ for i, sinif in enumerate(sira):
     ikon = sinif_ayarlari[sinif]["ikon"]
     isim = sinif_ayarlari[sinif]["isim"]
     
-    # CSS Flexbox kullanılarak ikon, başlık ve yüzdeler kusursuz bir şekilde merkeze hizalandı
+    # Hata Çözümü: h4 ve h5 etiketleri yerine div kullanılarak 
+    # Streamlit'in otomatik eklediği görünmez linklerin eksen kaydırması engellendi.
     html_card = f"""
-    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3); width: 100%;">
-        <h4 style="color: {renk}; margin: 0; font-size: 32px; text-align: center;">{ikon}</h4>
-        <h5 style="color: white; margin: 15px 0; font-size: 24px; text-align: center;">{isim}</h5>
-        <p style="color: #ccc; font-size: 24px; font-weight: bold; margin: 0; text-align: center;">{alt_sinir} - {ust_sinir}</p>
+    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
+        <div style="color: {renk}; margin-bottom: 10px; font-size: 32px;">{ikon}</div>
+        <div style="color: white; margin-bottom: 15px; font-size: 24px; font-weight: bold;">{isim}</div>
+        <div style="color: #ccc; font-size: 24px; font-weight: bold;">{alt_sinir} - {ust_sinir}</div>
     </div>
     """
     with sutunlar[i]:
