@@ -326,13 +326,13 @@ else:
 
 g_col1, g_col2 = st.columns([1, 1])
 
-# Kadran Çizimi
+# Kadran Çizimi (Yükseklik ve Metin Kayması Optimize Edildi)
 with g_col1:
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = risk_skoru_yuzde,
         domain = {'x': [0, 1], 'y': [0, 1]},
-        number = {'suffix': "/100", 'font': {'size': 45, 'color': bar_color}},
+        number = {'suffix': "/100", 'font': {'size': 40, 'color': bar_color}},
         gauge = {
             'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "white"},
             'bar': {'color': "rgba(0,0,0,0)"},
@@ -352,7 +352,7 @@ with g_col1:
             }
         }
     ))
-    fig_gauge.update_layout(height=200, margin=dict(l=20, r=20, t=10, b=10))
+    fig_gauge.update_layout(height=260, margin=dict(l=30, r=30, t=50, b=10))
     st.plotly_chart(fig_gauge, use_container_width=True)
 
 # Dinamik Yatırım Profili Geri Bildirimleri
@@ -397,7 +397,7 @@ with g_col2:
         )
 
 # ==========================================
-# 3. BÖLÜM: DİNAMİK BİLGİ KARTLARI
+# 3. BÖLÜM: DİNAMİK BİLGİ KARTLARI (TAM ORTALANDI)
 # ==========================================
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("📊 Güncel Volatilite Sınırları", anchor=False)
@@ -437,11 +437,12 @@ for i, sinif in enumerate(sira):
     ikon = sinif_ayarlari[sinif]["ikon"]
     isim = sinif_ayarlari[sinif]["isim"]
     
+    # Tüm elemanlara tarayıcı hizalamalarını ezen kesin ortalama kuralları tanımlandı
     html_card = f"""
-    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
-        <h4 style="color: {renk}; margin-top: 0; font-size: 32px;">{ikon}</h4>
-        <h5 style="color: white; margin: 15px 0; font-size: 24px;">{isim}</h5>
-        <p style="color: #ccc; font-size: 24px; font-weight: bold; margin-bottom: 0;">{alt_sinir} - {ust_sinir}</p>
+    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; text-align: center !important; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
+        <h4 style="color: {renk}; margin: 0 auto; text-align: center !important; font-size: 32px;">{ikon}</h4>
+        <h5 style="color: white; margin: 15px auto; text-align: center !important; font-size: 24px; display: block;">{isim}</h5>
+        <p style="color: #ccc; font-size: 24px; font-weight: bold; margin: 0 auto !important; text-align: center !important; display: block;">{alt_sinir} - {ust_sinir}</p>
     </div>
     """
     with sutunlar[i]:
