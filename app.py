@@ -326,7 +326,7 @@ else:
 
 g_col1, g_col2 = st.columns([1, 1])
 
-# Kadran Çizimi (Yükseklik ve Metin Kayması Optimize Edildi)
+# Kadran Çizimi
 with g_col1:
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
@@ -397,7 +397,7 @@ with g_col2:
         )
 
 # ==========================================
-# 3. BÖLÜM: DİNAMİK BİLGİ KARTLARI (TAM ORTALANDI)
+# 3. BÖLÜM: DİNAMİK BİLGİ KARTLARI (FLEXBOX İLE KUSURSUZ ORTALAMA)
 # ==========================================
 st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("📊 Güncel Volatilite Sınırları", anchor=False)
@@ -437,12 +437,12 @@ for i, sinif in enumerate(sira):
     ikon = sinif_ayarlari[sinif]["ikon"]
     isim = sinif_ayarlari[sinif]["isim"]
     
-    # Tüm elemanlara tarayıcı hizalamalarını ezen kesin ortalama kuralları tanımlandı
+    # CSS Flexbox kullanılarak ikon, başlık ve yüzdeler kusursuz bir şekilde merkeze hizalandı
     html_card = f"""
-    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; text-align: center !important; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
-        <h4 style="color: {renk}; margin: 0 auto; text-align: center !important; font-size: 32px;">{ikon}</h4>
-        <h5 style="color: white; margin: 15px auto; text-align: center !important; font-size: 24px; display: block;">{isim}</h5>
-        <p style="color: #ccc; font-size: 24px; font-weight: bold; margin: 0 auto !important; text-align: center !important; display: block;">{alt_sinir} - {ust_sinir}</p>
+    <div style="background-color: #2b2b2b; padding: 25px 15px; border-radius: 12px; border-top: 6px solid {renk}; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3); width: 100%;">
+        <h4 style="color: {renk}; margin: 0; font-size: 32px; text-align: center;">{ikon}</h4>
+        <h5 style="color: white; margin: 15px 0; font-size: 24px; text-align: center;">{isim}</h5>
+        <p style="color: #ccc; font-size: 24px; font-weight: bold; margin: 0; text-align: center;">{alt_sinir} - {ust_sinir}</p>
     </div>
     """
     with sutunlar[i]:
@@ -460,7 +460,6 @@ if yil_sonu_hedef is not None:
     guncel_fiyat = hisse_verisi['Son_Fiyat']
     beklenen_getiri_orani = ((yil_sonu_hedef - guncel_fiyat) / guncel_fiyat) * 100
     
-    # 3'lü Metrik Tasarımı (Doğruluk Oranı ayrı kart, açıklama pop-up)
     t_col1, t_col2, t_col3 = st.columns(3)
     
     t_col1.metric(
